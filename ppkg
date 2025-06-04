@@ -7246,7 +7246,13 @@ $PACKAGE_DO12345
 
         if [ "$TARGET_PLATFORM_NAME" = linux ] ; then
             if [ "$TARGET_PLATFORM_VERS" = musl ] ; then
-                printf '%s\n' 'INPUT(-l:libgcc_eh.a)' > "$PACKAGE_WORKING_DIR/lib/libgcc_s.a"
+                if [ "$TARGET_PLATFORM_ARCH" = riscv64 ] ; then
+                    LIBC_FILEPATH="$("$CC" -print-file-name=libc.a)"
+                    printf 'INPUT(%s -l:libgcc.a -l:libgcc_eh.a %s)\n' "$LIBC_FILEPATH" "$LIBC_FILEPATH" > "$PACKAGE_WORKING_DIR/lib/libc.a"
+                    printf '%s\n' '!<arch>' > "$PACKAGE_WORKING_DIR/lib/libgcc_s.a"
+                else
+                    printf '%s\n' 'INPUT(-l:libgcc_eh.a)' > "$PACKAGE_WORKING_DIR/lib/libgcc_s.a"
+                fi
             fi
         fi
     fi
@@ -10077,9 +10083,15 @@ __setup() {
 
         #################################################################################
 
+        if [ "$NATIVE_PLATFORM_KIND" = linux ] ; then
+            SRC=sysinfo/src/lib/determine-linux-system-libc.c
+        else
+            SRC=
+        fi
+
         step "install sysinfo"
         run git clone --depth=1 https://github.com/leleliu008/sysinfo
-        run cc -Os -flto -o bin/sysinfo sysinfo/src/main/sysinfo.c sysinfo/src/lib/sysinfo.c -Isysinfo/src/lib
+        run cc -Os -flto -o bin/sysinfo sysinfo/src/main/sysinfo.c sysinfo/src/lib/sysinfo.c $SRC -Isysinfo/src/lib
         run strip bin/sysinfo
         run bin/sysinfo
 
@@ -10826,7 +10838,7 @@ fi
     fi
 }
 
-PPKG_VERSION=0.23.6
+PPKG_VERSION=0.23.7
 
 PPKG_ARG0="$0"
 PPKG_ARG1="$1"
