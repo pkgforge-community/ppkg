@@ -685,6 +685,11 @@ all relevant directories and files are located under `~/.ppkg` directory.
     export PPKG_DEFAULT_TARGET=netbsd-9.3-amd64
     ```
 
+- **PPKG_FORMULA_SEARCH_DIRS**
+
+    colon-seperated list of directories to search formulas.
+
+
 **Note:** some commonly used environment variables are overridden by this software, these are `CC`, `CXX`, `CPP`, `AS`, `AR`, `LD`, `CFLAGS`, `CPPFLAGS`, `LDFLAGS`, `PKG_CONFIG_LIBDIR`, `PKG_CONFIG_PATH`, `ACLOCAL_PATH`
 
 ## ppkg formula scheme
@@ -701,8 +706,8 @@ a ppkg formula's file content only has one level mapping and shall has following
 
 |KEY|required?|overview|
 |-|-|-|
-|`pkgtype`|optional|the type of this package. value shall be any one of `exe`, `lib`, `exe+lib`.<br>If this mapping is not present, `ndk-pkg` will determine the package type by package name, if the package name starts/ends with `lib` or ends with `-dev`, it would be recognized as type `lib`, otherwise, it would be recognized as type `exe`|
-|`exetype`|optional|a space-separated list of executable types are supported by this project. values can be one or a combination of `static`, `static-pie`, `static-most` `static-less`.<br>`static` indicates this package support creating fully statically linked executables.<br>`static-most` indicates this package support creating mostly statically linked executables.<br>A type starts with `~` sign means that it is not supported by this package.<br>All types are supported by default if this mapping is not present.<br>This mapping is only for `exe` type package.|
+|`pkgtype`|optional|the type of this package.<br>value shall be any one of `exe`, `lib`, `exe+lib`.<br>If this mapping is not present, `ndk-pkg` will determine the package type by package name, if the package name starts/ends with `lib` or ends with `-dev`, it would be recognized as type `lib`, otherwise, it would be recognized as type `exe`|
+|`linkage`|optional|This mapping is only for `exe` type package.<br>specify the executable's link method.<br>value shall be any one of `static`, `static/pie`, `shared`, `shared/most`.<br>`static` indicates this package only support creating fully statically linked executables.<br>`shared` indicates this package only support creating dynamically linked executables and `ppkg` will try to link as many static libraries as possible.<br>`shared/most` indicates this package only support creating dynamically linked executables and ppkg will try to link as many shared libraries as possible. <br>`shared` as default if this mapping is not present.|
 |`summary`|required|one sentence description of this package.|
 |`license`|optional|a space-separated list of [SPDX license short identifiers](https://spdx.github.io/spdx-spec/v2.3/SPDX-license-list/#a1-licenses-with-short-identifiers)|
 |`version`|optional|the version of this package.<br>If this mapping is not present, it will be calculated from `src-url`, if `src-url` is also not present, it will be calculated from running time as format `date +%Y.%m.%d`|
@@ -758,6 +763,8 @@ a ppkg formula's file content only has one level mapping and shall has following
 |`dotweak`|optional|POSIX shell code to be run to do some tweaks immediately after installing.<br>`PWD` is `$PACKAGE_INSTALL_DIR`|
 ||||
 |`bindenv`|optional|bind environment variables to executables. multiple lines of formatted string `<KEY>=<VALUE>`. `%s` represents the install directory.|
+||||
+|`wrapper`|optional|wrapper c source code. multiple line of formatted string `<SRC>\|<DST>`. e.g. `bear.c\|bin/` means that ppkg will fetch `bear.c` from https://raw.githubusercontent.com/leleliu008/ppkg-formula-repository-official-core/refs/heads/master/wrappers/bear.c then install it to `$PACKAGE_INSTALL_DIR/bin/` directory.|
 ||||
 |`caveats`|optional|multiple lines of plain text to be displayed after installation.|
 
