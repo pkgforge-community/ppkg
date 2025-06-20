@@ -896,15 +896,21 @@ __sync_available_formula_repositories() {
   __path_of_formula_of_the_given_package() {
     [ -z "$1" ] && abort 1 "__path_of_formula_of_the_given_package <PACKAGE-NAME>, <PACKAGE-NAME> is unspecified."
 
-    for FORMULA_SEARCH_DIR in $PPKG_FORMULA_SEARCH_DIRS
-    do
-        FORMULA_FILEPATH="$FORMULA_SEARCH_DIR/$1.yml"
+    if [ -n "$PPKG_FORMULA_SEARCH_DIRS" ] ; then
+        export IFS=':'
 
-        if [ -f           "$FORMULA_FILEPATH" ] ; then
-            printf '%s\n' "$FORMULA_FILEPATH"
-            return 0
-        fi
-    done
+        for FORMULA_SEARCH_DIR in $PPKG_FORMULA_SEARCH_DIRS
+        do
+            FORMULA_FILEPATH="$FORMULA_SEARCH_DIR/$1.yml"
+
+            if [ -f           "$FORMULA_FILEPATH" ] ; then
+                printf '%s\n' "$FORMULA_FILEPATH"
+                return 0
+            fi
+        done
+
+        unset IFS
+    fi
 
     [ -d "$PPKG_FORMULA_REPO_ROOT" ] || return 0
 
@@ -1056,6 +1062,7 @@ filetype_from_url() {
     unset PACKAGE_RESLIST
 
     unset PACKAGE_BINDENV
+    unset PACKAGE_WRAPPER
     unset PACKAGE_CAVEATS
 
     unset PACKAGE_BSYSTEM
@@ -1088,17 +1095,15 @@ filetype_from_url() {
     # whether the installed files can be moved/copied to other locations
     unset PACKAGE_MOVABLE
 
-    unset PACKAGE_EXETYPE
+    unset PACKAGE_LINKAGE
     unset PACKAGE_SUPPORT_BUILD_IN_PARALLEL
-    unset PACKAGE_SUPPORT_CREATE_FULLY_STATICALLY_LINKED_EXECUTABLE
-    unset PACKAGE_SUPPORT_CREATE_MOSTLY_STATICALLY_LINKED_EXECUTABLE
 
     unset PACKAGE_DEVELOPER
 
     #########################################################################################
 
     PACKAGE_PKGTYPE="$(yq '.pkgtype | select(. != null)' "$PACKAGE_FORMULA_FILEPATH")"
-    PACKAGE_EXETYPE="$(yq '.exetype | select(. != null)' "$PACKAGE_FORMULA_FILEPATH")"
+    PACKAGE_LINKAGE="$(yq '.linkage | select(. != null)' "$PACKAGE_FORMULA_FILEPATH")"
     PACKAGE_SUMMARY="$(yq '.summary | select(. != null)' "$PACKAGE_FORMULA_FILEPATH")"
     PACKAGE_LICENSE="$(yq '.license | select(. != null)' "$PACKAGE_FORMULA_FILEPATH")"
     PACKAGE_VERSION="$(yq '.version | select(. != null)' "$PACKAGE_FORMULA_FILEPATH")"
@@ -1153,6 +1158,7 @@ filetype_from_url() {
     PACKAGE_RESLIST="$(yq '.reslist | select(. != null)' "$PACKAGE_FORMULA_FILEPATH")"
 
     PACKAGE_BINDENV="$(yq '.bindenv | select(. != null)' "$PACKAGE_FORMULA_FILEPATH")"
+    PACKAGE_WRAPPER="$(yq '.wrapper | select(. != null)' "$PACKAGE_FORMULA_FILEPATH")"
     PACKAGE_CAVEATS="$(yq '.caveats | select(. != null)' "$PACKAGE_FORMULA_FILEPATH")"
 
     PACKAGE_SUPPORT_BUILD_IN_PARALLEL="$(yq '.parallel | select(. != null)' "$PACKAGE_FORMULA_FILEPATH")"
@@ -1243,6 +1249,7 @@ filetype_from_url() {
     else
         if [ -n "$PACKAGE_GIT_URL" ] ; then
             PACKAGE_SRC_FILETYPE=.git
+            PACKAGE_SRC_FILEPATH=.git
 
             if [ -z "$PACKAGE_VERSION" ] && [ -z "$PACKAGE_GIT_SHA" ] && [ -n "$PACKAGE_GIT_REF" ] ; then
                 PACKAGE_GIT_REF_NAME="${PACKAGE_GIT_REF##*/}"
@@ -1481,24 +1488,10 @@ filetype_from_url() {
     #########################################################################################
 
     if [ "$PACKAGE_PKGTYPE" = exe ] ; then
-        for item in $PACKAGE_EXETYPE
-        do
-            case $item in
-                ~*) item="${item#'~'}"
-                    case $item in
-                        static)      PACKAGE_SUPPORT_CREATE_FULLY_STATICALLY_LINKED_EXECUTABLE=0 ;;
-                        static-pie)  PACKAGE_SUPPORT_CREATE_FULLY_STATICALLY_LINKED_EXECUTABLE=0 ;;
-                        static-most) PACKAGE_SUPPORT_CREATE_MOSTLY_STATICALLY_LINKED_EXECUTABLE=0 ;;
-                        *)  abort 1 "unrecognized exe type: $item"
-                    esac
-            esac
-        done
-
-        [ -z "$PACKAGE_SUPPORT_CREATE_FULLY_STATICALLY_LINKED_EXECUTABLE" ]  && PACKAGE_SUPPORT_CREATE_FULLY_STATICALLY_LINKED_EXECUTABLE=1
-        [ -z "$PACKAGE_SUPPORT_CREATE_MOSTLY_STATICALLY_LINKED_EXECUTABLE" ] && PACKAGE_SUPPORT_CREATE_MOSTLY_STATICALLY_LINKED_EXECUTABLE=1
-    else
-        PACKAGE_SUPPORT_CREATE_FULLY_STATICALLY_LINKED_EXECUTABLE=0
-        PACKAGE_SUPPORT_CREATE_MOSTLY_STATICALLY_LINKED_EXECUTABLE=0
+        case $PACKAGE_LINKAGE in
+            ''|static|static/pie|shared|shared/most) ;;
+            *)  abort 1 "unsupported linkage: $PACKAGE_LINKAGE"
+        esac
     fi
 }
 
@@ -2729,11 +2722,19 @@ int main(int argc, char* argv[]) {
 
     ////////////////////////////////////////////////////
 
+    const char * s = ".exe";
+
+    int j;
+
+    for (j = 0; s[j] != '\0'; j++);
+
+    char realExePath[n + j + 1];
+
     int slashIndex = -1;
 
-    char realExePath[n + 5];
+    int i;
 
-    for (int i = 0; i < n; i++) {
+    for (i = 0; i < n; i++) {
         realExePath[i] = selfExePath[i];
 
         if (selfExePath[i] == '/') {
@@ -2741,12 +2742,16 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    realExePath[n    ] = '.';
-    realExePath[n + 1] = 'e';
-    realExePath[n + 2] = 'x';
-    realExePath[n + 3] = 'e';
-    realExePath[n + 4] = '\\0';
+    char * p = realExePath + n;
 
+    for (;;) {
+        p[0] = s[0];
+
+        if (p[0] == '\0') break;
+
+        p++;
+        s++;
+    }
 EOF
 
     ####################################
@@ -2769,21 +2774,30 @@ EOF
 
     ////////////////////////////////////////////////////
 
-    selfExePath[slashIndex] = '\0';
+    p = getenv("$KEY");
 
-    char kv$I[PATH_MAX];
+    if (p == NULL || p[0] == '\0') {
+        s = "$VALUE_RELATIVE_TO_SELF_EXE_PATH";
 
-    if (snprintf(kv$I, PATH_MAX, "%s/$VALUE_RELATIVE_TO_SELF_EXE_PATH", selfExePath) < 0) {
-        perror(NULL);
-        return 11;
+        for (j = 0; s[j] != '\0'; j++);
+
+        char pathBuf[slashIndex + j + 1];
+
+        for (i = 0; i <= slashIndex; i++) {
+            pathBuf[i] = selfExePath[i];
+        }
+
+        p = pathBuf + slashIndex + 1;
+
+        for (i = 0U; i <= j; i++) {
+            p[i] = s[i];
+        }
+
+        if (setenv("$KEY", pathBuf, 1) != 0) {
+            perror("$KEY");
+            return 10;
+        }
     }
-
-    if (setenv("$KEY", kv$I, 1) != 0) {
-        perror(NULL);
-        return 10;
-    }
-
-    selfExePath[slashIndex] = '/';
 EOF
                     ;;
                 *)  cat >> "$FILEPATH.c" <<EOF
@@ -2819,34 +2833,51 @@ EOF
 
     ////////////////////////////////////////////////////
 
-    const char * dynamicLoaderName = "$DYNAMIC_LOADER_FILENAME";
-    const char * libraryPathRelativeToSelfExePath = "/$LIBRARY_PATH_RELATIVE_TO_SELF_EXE_PATH";
+    const char * const dynamicLoaderName = "$DYNAMIC_LOADER_FILENAME";
+    const char * const libraryPathRelativeToSelfExePath = "$LIBRARY_PATH_RELATIVE_TO_SELF_EXE_PATH";
 
     ////////////////////////////////////////////////////
 
-    char libraryPath[PATH_MAX];
+    for (j = 0; libraryPathRelativeToSelfExePath[j] != '\0'; j++);
 
-    for (int i = 0; i <= slashIndex; i++) {
+    char libraryPath[slashIndex + j + 1];
+
+    for (i = 0; i <= slashIndex; i++) {
         libraryPath[i] = selfExePath[i];
     }
 
-    for (int i = 1; ; i++) {
-        libraryPath[slashIndex + i] = libraryPathRelativeToSelfExePath[i];
+    p = libraryPath + slashIndex + 1;
 
-        if (libraryPathRelativeToSelfExePath[i] == '\\0') {
-            break;
-        }
+    for (i = 0; i <= j; i++) {
+        p[i] = libraryPathRelativeToSelfExePath[i];
     }
 
     ////////////////////////////////////////////////////
 
-    char dynamicLoaderPath[PATH_MAX];
+    int k;
 
-    int ret = snprintf(dynamicLoaderPath, PATH_MAX, "%s/%s", libraryPath, dynamicLoaderName);
+    for (k = 0; dynamicLoaderName[k] != '\0'; k++);
 
-    if (ret < 0) {
-        perror(NULL);
-        return 2;
+    char dynamicLoaderPath[slashIndex + j + k + 2];
+
+    for (i = 0; i <= slashIndex; i++) {
+        dynamicLoaderPath[i] = selfExePath[i];
+    }
+
+    p = dynamicLoaderPath + slashIndex + 1;
+
+    for (i = 0; i < j; i++) {
+        p[i] = libraryPathRelativeToSelfExePath[i];
+    }
+
+    p += j;
+
+    p[0] = '/';
+
+    p++;
+
+    for (i = 0; i <= k; i++) {
+        p[i] = dynamicLoaderName[i];
     }
 
     ////////////////////////////////////////////////////
@@ -2862,7 +2893,7 @@ EOF
 
     n = 6;
 
-    for (int i = 1; i < argc; i++) {
+    for (i = 1; i < argc; i++) {
         argv2[n++] = argv[i];
     }
 
@@ -5359,8 +5390,7 @@ __inspect_install_arguments() {
                 [ -e "$1" ] || abort 1 "'$1' was expected to be exist, but it was not."
                 [ -d "$1" ] || abort 1 "'$1' was expected to be a directory, but it was not."
                 FORMULA_SEARCH_DIR="$(realpath "$1")"
-                SPECIFIED_FORMULA_SEARCH_DIRS="$SPECIFIED_FORMULA_SEARCH_DIRS
-$FORMULA_SEARCH_DIR"
+                SPECIFIED_FORMULA_SEARCH_DIRS="$SPECIFIED_FORMULA_SEARCH_DIRS:$FORMULA_SEARCH_DIR"
                 ;;
             -K) REQUEST_TO_KEEP_SESSION_DIR=1 ;;
             -U) REQUEST_TO_UPGRADE_IF_POSSIBLE=1 ;;
@@ -5375,7 +5405,11 @@ $FORMULA_SEARCH_DIR"
 
     #########################################################################################
 
-    PPKG_FORMULA_SEARCH_DIRS="$SPECIFIED_FORMULA_SEARCH_DIRS"
+    if [ -z "$PPKG_FORMULA_SEARCH_DIRS" ] ; then
+        PPKG_FORMULA_SEARCH_DIRS="${SPECIFIED_FORMULA_SEARCH_DIRS#:}"
+    else
+        PPKG_FORMULA_SEARCH_DIRS="${SPECIFIED_FORMULA_SEARCH_DIRS#:}:$PPKG_FORMULA_SEARCH_DIRS"
+    fi
 
     #########################################################################################
 
@@ -6011,15 +6045,15 @@ run gsed -i "\"/check_lib/a not_execute,\"" Makefile.PL
 }
 
 native_package_info_libiconv() {
-    PACKAGE_SRC_URL='https://ftp.gnu.org/gnu/libiconv/libiconv-1.17.tar.gz'
-    PACKAGE_SRC_SHA='8f74213b56238c85a50a5329f77e06198771e70dd9a739779f4c02f65d971313'
+    PACKAGE_SRC_URL='https://ftp.gnu.org/gnu/libiconv/libiconv-1.18.tar.gz'
+    PACKAGE_SRC_SHA='3b08f5f4f9b4eb82f151a7040bfd6fe6c6fb922efe4b1659c66ea933276965e8'
     PACKAGE_DEP_AUX='gmake'
     PACKAGE_INSTALL='configure --disable-dependency-tracking --enable-static --enable-shared --enable-extra-encodings'
 }
 
 native_package_info_libxml2() {
-    PACKAGE_SRC_URL='https://download.gnome.org/sources/libxml2/2.12/libxml2-2.12.6.tar.xz'
-    PACKAGE_SRC_SHA='889c593a881a3db5fdd96cc9318c87df34eb648edfc458272ad46fd607353fbb'
+    PACKAGE_SRC_URL='https://download.gnome.org/sources/libxml2/2.13/libxml2-2.13.8.tar.xz'
+    PACKAGE_SRC_SHA='277294cb33119ab71b2bc81f2f445e9bc9435b893ad15bb2cd2b0e859a0ee84a'
     PACKAGE_DEP_PKG='libz libiconv'
     PACKAGE_DEP_AUX='gmake'
     PACKAGE_INSTALL='configure --with-zlib --with-python --with-iconv="$NATIVE_PACKAGE_INSTALLED_ROOT/libiconv" --without-lzma --without-readline --without-coverage --without-debug --enable-ipv6 --enable-static --enable-shared LIBS=-liconv'
@@ -6153,6 +6187,33 @@ EOF
     unset PACKAGE_CREATE_MOSTLY_STATICALLY_LINKED_EXECUTABLE
 
     [ "$PACKAGE_PKGTYPE" = exe ] && {
+        unset PACKAGE_SUPPORT_CREATE_FULLY_STATICALLY_LINKED_EXECUTABLE
+        unset PACKAGE_SUPPORT_CREATE_MOSTLY_STATICALLY_LINKED_EXECUTABLE
+
+        case $PACKAGE_LINKAGE in
+            '')
+                PACKAGE_SUPPORT_CREATE_FULLY_STATICALLY_LINKED_EXECUTABLE=1
+                PACKAGE_SUPPORT_CREATE_MOSTLY_STATICALLY_LINKED_EXECUTABLE=1
+                ;;
+            static)
+                PACKAGE_SUPPORT_CREATE_FULLY_STATICALLY_LINKED_EXECUTABLE=1
+                PACKAGE_SUPPORT_CREATE_MOSTLY_STATICALLY_LINKED_EXECUTABLE=0
+                ;;
+            static/pie)
+                PACKAGE_SUPPORT_CREATE_FULLY_STATICALLY_LINKED_EXECUTABLE=1
+                PACKAGE_SUPPORT_CREATE_MOSTLY_STATICALLY_LINKED_EXECUTABLE=0
+                ;;
+            shared)
+                PACKAGE_SUPPORT_CREATE_FULLY_STATICALLY_LINKED_EXECUTABLE=0
+                PACKAGE_SUPPORT_CREATE_MOSTLY_STATICALLY_LINKED_EXECUTABLE=1
+                ;;
+            shared/most)
+                PACKAGE_SUPPORT_CREATE_FULLY_STATICALLY_LINKED_EXECUTABLE=0
+                PACKAGE_SUPPORT_CREATE_MOSTLY_STATICALLY_LINKED_EXECUTABLE=0
+                ;;
+            *)  abort 1 "unsupported linkage: $PACKAGE_LINKAGE"
+        esac
+
         if [ "$REQUEST_TO_CREATE_FULLY_STATICALLY_LINKED_EXECUTABLE" = 1 ] ; then
             if [ "$PACKAGE_SUPPORT_CREATE_FULLY_STATICALLY_LINKED_EXECUTABLE" = 1 ] ; then
                 PACKAGE_CREATE_FULLY_STATICALLY_LINKED_EXECUTABLE=1
@@ -6960,10 +7021,30 @@ $PACKAGE_DOFETCH
 
     #########################################################################################
 
-    if [ "$TARGET_PLATFORM_VERS" = musl ] && [ "$PACKAGE_DEP_RES" = 'sys/queue.h' ] ; then
-        wfetch 'https://raw.githubusercontent.com/leleliu008/sys-queue.h/v1/sys-queue.h' --no-buffer
-        run install -d "$PACKAGE_INSTALLING_INC_DIR/sys"
-        run mv sys-queue.h "$PACKAGE_INSTALLING_INC_DIR/sys/queue.h"
+    unset LIBEXECINFO_GIT_URL
+
+    if [ "$TARGET_PLATFORM_VERS" = musl ] ; then
+        for item in $PACKAGE_DEP_RES
+        do
+            case $item in
+                sys/queue.h)
+                    run cd "$PACKAGE_WORKING_DIR"
+                    run install -d include/sys/
+                    wfetch https://raw.githubusercontent.com/leleliu008/sys-queue.h/v1/sys-queue.h -o include/sys/queue.h --no-buffer
+                    ;;
+                libexecinfo)
+                    LIBEXECINFO_GIT_URL='https://github.com/leleliu008/libexecinfo'
+
+                    if [ -n "$PPKG_URL_TRANSFORM" ] ; then
+                        LIBEXECINFO_GIT_URL="$("$PPKG_URL_TRANSFORM" "$LIBEXECINFO_GIT_URL")"
+                    fi
+
+                    run cd "$PACKAGE_WORKING_DIR"
+                    run git clone --depth=1 "$LIBEXECINFO_GIT_URL" lib/libexecinfo
+                    run ln -s ../lib/libexecinfo/execinfo.h      include/execinfo.h
+                    run ln -s ../lib/libexecinfo/stacktraverse.h include/stacktraverse.h
+            esac
+        done
     fi
 
     #########################################################################################
@@ -7246,7 +7327,13 @@ $PACKAGE_DO12345
 
         if [ "$TARGET_PLATFORM_NAME" = linux ] ; then
             if [ "$TARGET_PLATFORM_VERS" = musl ] ; then
-                printf '%s\n' 'INPUT(-l:libgcc_eh.a)' > "$PACKAGE_WORKING_DIR/lib/libgcc_s.a"
+                if [ "$TARGET_PLATFORM_ARCH" = riscv64 ] ; then
+                    LIBC_FILEPATH="$("$CC" -print-file-name=libc.a)"
+                    printf 'INPUT(%s -l:libgcc.a -l:libgcc_eh.a %s)\n' "$LIBC_FILEPATH" "$LIBC_FILEPATH" > "$PACKAGE_WORKING_DIR/lib/libc.a"
+                    printf '%s\n' '!<arch>' > "$PACKAGE_WORKING_DIR/lib/libgcc_s.a"
+                else
+                    printf '%s\n' 'INPUT(-l:libgcc_eh.a)' > "$PACKAGE_WORKING_DIR/lib/libgcc_s.a"
+                fi
             fi
         fi
     fi
@@ -7534,6 +7621,10 @@ EOF
         LDFLAGS="-static --static -ffunction-sections -fdata-sections -Wl,--gc-sections $LDFLAGS"
         #-Wl,--no-dynamic-linker
     fi
+
+    [ -n "$LIBEXECINFO_GIT_URL" ] && {
+        LDFLAGS="$LDFLAGS -Wl,--whole-archive $PACKAGE_INSTALLING_LIB_DIR/libexecinfo.a -Wl,--no-whole-archive"
+    }
 
     CCFLAGS="$CCFLAGS $PACKAGE_CCFLAGS"
     XXFLAGS="$XXFLAGS $PACKAGE_XXFLAGS"
@@ -7918,6 +8009,16 @@ EOF
 
     #########################################################################################
 
+    [ -n "$LIBEXECINFO_GIT_URL" ] && {
+        run cd "$PACKAGE_INSTALLING_LIB_DIR/libexecinfo"
+        run "$CC" -c "$CFLAGS" stacktraverse.c
+        run "$CC" -c "$CFLAGS" execinfo.c
+        run "$AR" crs libexecinfo.a execinfo.o stacktraverse.o
+        run mv libexecinfo.a ..
+    }
+
+    #########################################################################################
+
     step "dopatch for target"
 
     cd "$PACKAGE_BSCRIPT_DIR"
@@ -8084,6 +8185,17 @@ EOF
         run rm -f .crates.toml
         run rm -f .crates2.json
     }
+
+    #########################################################################################
+
+    for item in $PACKAGE_WRAPPER
+    do
+        S="${item%'|'*}"
+        T="${item#*'|'}"
+
+        wfetch "https://raw.githubusercontent.com/leleliu008/ppkg-formula-repository-official-core/refs/heads/master/wrappers/$S" --no-buffer
+        run mv "$S" "$T"
+    done
 
     #########################################################################################
 
@@ -10057,6 +10169,8 @@ __setup() {
         step "install ppkg core"
         run git clone --depth=1 https://github.com/leleliu008/ppkg
 
+        rm ppkg/core/wrapper-template.c
+
         for f in ppkg/core/*.c
         do
             o="${f##*/}"
@@ -10077,9 +10191,15 @@ __setup() {
 
         #################################################################################
 
+        if [ "$NATIVE_PLATFORM_KIND" = linux ] ; then
+            SRC=sysinfo/src/lib/determine-linux-system-libc.c
+        else
+            SRC=
+        fi
+
         step "install sysinfo"
         run git clone --depth=1 https://github.com/leleliu008/sysinfo
-        run cc -Os -flto -o bin/sysinfo sysinfo/src/main/sysinfo.c sysinfo/src/lib/sysinfo.c -Isysinfo/src/lib
+        run cc -Os -flto -o bin/sysinfo sysinfo/src/main/sysinfo.c sysinfo/src/lib/sysinfo.c $SRC -Isysinfo/src/lib
         run strip bin/sysinfo
         run bin/sysinfo
 
@@ -10826,7 +10946,7 @@ fi
     fi
 }
 
-PPKG_VERSION=0.23.6
+PPKG_VERSION=0.23.14
 
 PPKG_ARG0="$0"
 PPKG_ARG1="$1"
@@ -10838,7 +10958,6 @@ PPKG_UPGRAGE_URL='https://raw.githubusercontent.com/leleliu008/ppkg/master/ppkg'
 PPKG_OFFICIAL_FORMULA_REPO_URL='https://github.com/leleliu008/ppkg-formula-repository-official-core.git'
 PPKG_ZSH_COMPLETION_SCRIPT_URL='https://raw.githubusercontent.com/leleliu008/ppkg/master/ppkg-zsh-completion'
 
-PPKG_FORMULA_SEARCH_DIRS=
 PPKG_FORMULA_REPO_ROOT="$PPKG_HOME/repos.d"
 PPKG_PACKAGE_INSTALLED_ROOT="$PPKG_HOME/installed"
 PPKG_PACKAGE_SYMLINKED_ROOT="$PPKG_HOME/symlinked"
