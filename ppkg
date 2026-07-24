@@ -10551,7 +10551,10 @@ __setup_syspm_netbsd() {
     SYSPM=pkgin
 
     run $sudo pkgin -y update
-    run $sudo pkgin -y install bash coreutils findutils gmake gawk gsed grep git curl bsdtar jq gcc13 binutils ca-certificates
+    run $sudo pkgin -y install bash coreutils findutils gmake gawk gsed grep git curl bsdtar jq gcc13 binutils ca-certificates || {
+        cat /var/db/pkgin/pkg_install-err.log
+        exit 1
+    }
 
     # https://ftp.netbsd.org/pub/pkgsrc/current/pkgsrc/security/ca-certificates/index.html
     run $sudo /usr/pkg/sbin/update-ca-certificates --etccertsdir /etc/openssl/certs
